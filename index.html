@@ -139,12 +139,20 @@
   <script>
     const endpoint = "https://api.triplydb.com/datasets/Allisonmransom/deleted-records-knowledge-graph/sparql";
 
-    // Adjust these if your predicate names differ.
+    // Tuned to your TTL structure:
+    // ex:Book_0445 a ex:Book ;
+    //   prop:title "...";
+    //   prop:publicationYear "...";
+    //   prop:networkId "...";
+    //   prop:callNumber ex:CallNumber_N6537_S616_2006 ;
+    //   prop:subject ex:Subject_N .
     const FIELD_NAMES = {
       title: ["title"],
-      subject: ["subject", "lcclass", "class"],
-      author: ["author", "creator", "contributor"],
-      callNumber: ["callnumber"]
+      subject: ["subject"],
+      callNumber: ["callnumber"],
+      publicationYear: ["publicationyear"],
+      publicationDateRaw: ["publicationdateraw"],
+      networkId: ["networkid"]
     };
 
     let bookMeta = {};
@@ -258,6 +266,31 @@
       return res.json();
     }
 
+    // REPLACED normalizeDisplayValue() with one tuned to your TTL
+    function normalizeDisplayValue(predLN, displayValue) {
+      const pred = predLN.toLowerCase();
+
+      // ex:Subject_N -> LC Class N
+      if (pred.includes("subject")) {
+        if (displayValue.startsWith("Subject_")) {
+          return "LC Class " + displayValue.replace("Subject_", "");
+        }
+        return displayValue;
+      }
+
+      // ex:CallNumber_N6537_S616_2006 -> N6537 S616 2006
+      if (pred.includes("callnumber")) {
+        if (displayValue.startsWith("CallNumber_")) {
+          return displayValue
+            .replace("CallNumber_", "")
+            .replaceAll("_", " ");
+        }
+        return displayValue;
+      }
+
+      return displayValue;
+    }
+
     async function runSearch() {
       const raw = document.getElementById("searchBox").value.trim();
       if (!raw) {
@@ -271,24 +304,24 @@
       try {
         const q = escapeForSparqlString(raw.toLowerCase());
 
-        // Title-focused search first.
+        // Search specifically by prop:title literal content
         const sparql = `
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 PREFIX dcterms: <http://purl.org/dc/terms/>
 
-SELECT ?row ?p ?o ?oLabel WHERE {
+SELECT ?book ?p ?o ?oLabel WHERE {
   {
-    SELECT DISTINCT ?row WHERE {
-      ?row ?p1 ?o1 .
-      FILTER(isLiteral(?o1))
-      FILTER(CONTAINS(LCASE(STR(?o1)), "${q}"))
-      FILTER(CONTAINS(LCASE(STR(?p1)), "title"))
+    SELECT DISTINCT ?book WHERE {
+      ?book ?titlePred ?titleValue .
+      FILTER(isLiteral(?titleValue))
+      FILTER(CONTAINS(LCASE(STR(?titlePred)), "title"))
+      FILTER(CONTAINS(LCASE(STR(?titleValue)), "${q}"))
     }
     LIMIT 100
   }
 
-  ?row ?p ?o .
+  ?book ?p ?o .
 
   OPTIONAL {
     FILTER(isIRI(?o))
@@ -315,16 +348,6 @@ LIMIT 5000
       }
     }
 
-    function normalizeDisplayValue(predLN, displayValue) {
-      // Optional polish: if your class values appear as just "N", display them as "LC Class N"
-      if (predLN.toLowerCase().includes("class")) {
-        if (!displayValue.toLowerCase().startsWith("lc class")) {
-          return "LC Class " + displayValue;
-        }
-      }
-      return displayValue;
-    }
-
     function buildBookCentricGraph(data) {
       cy.elements().remove();
       bookMeta = {};
@@ -332,26 +355,27 @@ LIMIT 5000
       const nodes = {};
       const edges = {};
 
-      const rowTitle = {};
+      const bookTitle = {};
+
       data.results.bindings.forEach(b => {
-        const row = b.row.value;
+        const book = b.book.value;
         const p = b.p.value;
         const o = b.o;
 
         if (o.type === "literal" && matchesAnyLocalName(p, FIELD_NAMES.title)) {
-          rowTitle[row] = o.value;
+          bookTitle[book] = o.value;
         }
       });
 
       data.results.bindings.forEach(b => {
-        const row = b.row.value;
+        const book = b.book.value;
         const p = b.p.value;
         const o = b.o;
 
-        const title = rowTitle[row];
+        const title = bookTitle[book];
         if (!title) return;
 
-        const bookId = safeId("book:", title);
+        const bookId = safeId("book:", book);
 
         if (!nodes[bookId]) {
           nodes[bookId] = {
@@ -359,7 +383,8 @@ LIMIT 5000
               id: bookId,
               label: title,
               size: 10,
-              kind: "book"
+              kind: "book",
+              bookUri: book
             }
           };
 
@@ -369,6 +394,7 @@ LIMIT 5000
           };
         }
 
+        // Skip title edge creation; the title is the book node label
         if (matchesAnyLocalName(p, FIELD_NAMES.title)) return;
 
         const predLN = localName(p);
@@ -392,6 +418,8 @@ LIMIT 5000
 
         displayValue = normalizeDisplayValue(predLN, displayValue);
 
+        // IMPORTANT: metaId uses predicate + exact stable value
+        // so clicking LC Class N can query all books sharing ex:Subject_N
         const metaId = safeId("meta:", p + "|" + stableValue);
 
         if (!nodes[metaId]) {
@@ -445,26 +473,27 @@ LIMIT 5000
       const newNodes = {};
       const newEdges = {};
 
-      const rowTitle = {};
+      const bookTitle = {};
+
       data.results.bindings.forEach(b => {
-        const row = b.row.value;
+        const book = b.book.value;
         const p = b.p.value;
         const o = b.o;
 
         if (o.type === "literal" && matchesAnyLocalName(p, FIELD_NAMES.title)) {
-          rowTitle[row] = o.value;
+          bookTitle[book] = o.value;
         }
       });
 
       data.results.bindings.forEach(b => {
-        const row = b.row.value;
+        const book = b.book.value;
         const p = b.p.value;
         const o = b.o;
 
-        const title = rowTitle[row];
+        const title = bookTitle[book];
         if (!title) return;
 
-        const bookId = safeId("book:", title);
+        const bookId = safeId("book:", book);
 
         if (cy.getElementById(bookId).empty() && !newNodes[bookId]) {
           newNodes[bookId] = {
@@ -472,7 +501,8 @@ LIMIT 5000
               id: bookId,
               label: title,
               size: 10,
-              kind: "book"
+              kind: "book",
+              bookUri: book
             }
           };
         }
@@ -583,12 +613,12 @@ LIMIT 5000
 
         if (objectType === "uri") {
           matchClause = `
-            ?row <${predicate}> <${stableValue}> .
+            ?book <${predicate}> <${stableValue}> .
           `;
         } else {
           const escapedValue = escapeForSparqlString(stableValue);
           matchClause = `
-            ?row <${predicate}> ?matchValue .
+            ?book <${predicate}> ?matchValue .
             FILTER(STR(?matchValue) = "${escapedValue}")
           `;
         }
@@ -598,21 +628,21 @@ PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 PREFIX dcterms: <http://purl.org/dc/terms/>
 
-SELECT ?row ?p ?o ?oLabel WHERE {
+SELECT ?book ?p ?o ?oLabel WHERE {
   {
-    SELECT DISTINCT ?row WHERE {
+    SELECT DISTINCT ?book WHERE {
       ${matchClause}
-    } LIMIT 100
+    } LIMIT 200
   }
 
-  ?row ?p ?o .
+  ?book ?p ?o .
 
   OPTIONAL {
     FILTER(isIRI(?o))
     ?o (rdfs:label|skos:prefLabel|dcterms:title) ?oLabel .
   }
 }
-LIMIT 5000
+LIMIT 8000
         `;
 
         const data = await sparqlSelect(sparql);
