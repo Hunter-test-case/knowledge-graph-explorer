@@ -6,15 +6,27 @@
   <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
 
   <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #ffffff; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #ffffff;
+    }
 
     #header {
       padding: 20px;
       background: #f4f6fb;
       border-bottom: 1px solid #d6dbe8;
     }
-    #header h2 { margin: 0; }
-    #header p { max-width: 980px; line-height: 1.45; margin: 8px 0 0 0; }
+
+    #header h2 {
+      margin: 0;
+    }
+
+    #header p {
+      max-width: 980px;
+      line-height: 1.45;
+      margin: 8px 0 0 0;
+    }
 
     #controls {
       padding: 12px 15px;
@@ -24,24 +36,62 @@
       align-items: center;
       flex-wrap: wrap;
     }
-    #searchBox { padding: 8px; font-size: 14px; width: 320px; }
-    button { padding: 8px 12px; font-size: 14px; cursor: pointer; }
 
-    #main { display: flex; height: 75vh; width: 100%; }
-    #cy { flex: 3; min-width: 0; }
+    #searchBox {
+      padding: 8px;
+      font-size: 14px;
+      width: 340px;
+    }
+
+    button {
+      padding: 8px 12px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    #main {
+      display: flex;
+      height: 75vh;
+      width: 100%;
+    }
+
+    #cy {
+      flex: 3;
+      min-width: 0;
+    }
+
     #details {
       flex: 1;
-      min-width: 260px;
+      min-width: 280px;
       border-left: 1px solid #ddd;
       padding: 15px;
       font-size: 14px;
       overflow: auto;
       background: #fafafa;
     }
-    #details h3 { margin: 0 0 8px 0; font-size: 14px; }
-    .detail-label { font-weight: bold; margin-top: 10px; }
-    .detail-value { margin-top: 4px; }
-    .muted { color: #666; font-size: 12px; line-height: 1.35; }
+
+    #details h3 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+    }
+
+    .detail-label {
+      font-weight: bold;
+      margin-top: 10px;
+    }
+
+    .detail-value {
+      margin-top: 4px;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .muted {
+      color: #666;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
     .pill {
       display: inline-block;
       font-size: 12px;
@@ -80,7 +130,7 @@
     <div id="details">
       <h3>Details</h3>
       <div class="muted">
-        Click a <b>book title</b> node to see all metadata captured from the current query results.
+        Click a <b>book title</b> node to see metadata. Click a <b>metadata</b> node to expand the graph in place and show related books.
       </div>
       <div id="detailsContent" style="margin-top: 12px;">
         <span class="muted">No selection yet.</span>
@@ -89,14 +139,8 @@
   </div>
 
   <script>
-    /**
-     * =========================
-     * CONFIG
-     * =========================
-     */
     const endpoint = "https://api.triplydb.com/datasets/Allisonmransom/deleted-records-knowledge-graph/sparql";
 
-    // Match your real predicates from the sample:
     const FIELD_NAMES = {
       title: ["title"],
       subject: ["subject"],
@@ -112,11 +156,11 @@
       ...FIELD_NAMES.author
     ];
 
-    /**
-     * =========================
-     * Cytoscape init
-     * =========================
-     */
+    let bookMeta = {};
+
+    const statusPill = document.getElementById("statusPill");
+    const detailsContent = document.getElementById("detailsContent");
+
     let cy = cytoscape({
       container: document.getElementById("cy"),
       elements: [],
@@ -169,15 +213,9 @@
       layout: { name: "cose" }
     });
 
-    const statusPill = document.getElementById("statusPill");
-    const detailsContent = document.getElementById("detailsContent");
-
-    /**
-     * =========================
-     * Helpers
-     * =========================
-     */
-    function setStatus(text) { statusPill.textContent = text; }
+    function setStatus(text) {
+      statusPill.textContent = text;
+    }
 
     function escapeForSparqlString(s) {
       return String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -198,7 +236,9 @@
       return prefix + encodeURIComponent(String(s));
     }
 
-    function uniq(arr) { return Array.from(new Set(arr)); }
+    function uniq(arr) {
+      return Array.from(new Set(arr));
+    }
 
     function escapeHtml(s) {
       return String(s)
@@ -209,21 +249,6 @@
         .replaceAll("'", "&#039;");
     }
 
-    /**
-     * =========================
-     * Data stores
-     * =========================
-     * bookMeta:
-     *  - Always includes Title
-     *  - Also includes a special key "All fields" that stores every predicate/value captured
-     */
-    let bookMeta = {}; // bookId -> { Title: string, "All fields": { pred: [values...] }, ...optional buckets }
-
-    /**
-     * =========================
-     * SPARQL fetch
-     * =========================
-     */
     async function sparqlSelect(query) {
       const res = await fetch(endpoint, {
         method: "POST",
@@ -236,16 +261,12 @@
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(`SPARQL HTTP ${res.status}: ${txt.slice(0, 200)}`);
+        throw new Error(`SPARQL HTTP ${res.status}: ${txt.slice(0, 300)}`);
       }
+
       return res.json();
     }
 
-    /**
-     * =========================
-     * Autocomplete
-     * =========================
-     */
     async function loadSuggestions() {
       try {
         setStatus("Loading suggestions…");
@@ -280,11 +301,6 @@
       }
     }
 
-    /**
-     * =========================
-     * Search + query
-     * =========================
-     */
     async function runSearch() {
       const raw = document.getElementById("searchBox").value.trim();
       if (!raw) {
@@ -323,7 +339,6 @@ LIMIT 3000
 
         const data = await sparqlSelect(sparql);
         buildBookCentricGraph(data);
-
         setStatus(`Showing results for “${raw}”`);
       } catch (e) {
         console.error(e);
@@ -332,25 +347,124 @@ LIMIT 3000
       }
     }
 
-    /**
-     * =========================
-     * Build book-centric graph
-     * =========================
-     * - Uses title literal as the main book node (large)
-     * - Includes literal + URI objects as metadata (small)
-     * - GUARANTEES metadata appears by storing "All fields" for each book
-     */
     function buildBookCentricGraph(data) {
-async function expandFromMetadataNode(node) {
-  const clickedValue = node.data("label");
-  if (!clickedValue) return;
+      cy.elements().remove();
+      bookMeta = {};
 
-  setStatus(`Expanding from “${clickedValue}”…`);
+      const nodes = {};
+      const edges = {};
 
-  try {
-    const q = escapeForSparqlString(clickedValue.toLowerCase());
+      const rowTitle = {};
+      data.results.bindings.forEach(b => {
+        const row = b.row.value;
+        const p = b.p.value;
+        const o = b.o;
 
-    const sparql = `
+        if (o.type === "literal" && matchesAnyLocalName(p, FIELD_NAMES.title)) {
+          rowTitle[row] = o.value;
+        }
+      });
+
+      data.results.bindings.forEach(b => {
+        const row = b.row.value;
+        const p = b.p.value;
+        const o = b.o;
+
+        const title = rowTitle[row];
+        if (!title) return;
+
+        const bookId = safeId("book:", title);
+
+        if (!nodes[bookId]) {
+          nodes[bookId] = {
+            data: {
+              id: bookId,
+              label: title,
+              size: 10,
+              kind: "book"
+            }
+          };
+
+          bookMeta[bookId] = {
+            "Title": [title],
+            "All fields": {}
+          };
+        }
+
+        if (matchesAnyLocalName(p, FIELD_NAMES.title)) return;
+
+        const predLN = localName(p);
+        const predLabel = predLN;
+
+        let stableValue;
+        let displayValue;
+
+        if (o.type === "literal") {
+          stableValue = o.value;
+          displayValue = o.value;
+        } else if (o.type === "uri") {
+          stableValue = o.value;
+          displayValue = b.oLabel ? b.oLabel.value : localName(o.value);
+        } else {
+          return;
+        }
+
+        const metaId = safeId("meta:", predLN + "|" + stableValue);
+
+        if (!nodes[metaId]) {
+          nodes[metaId] = {
+            data: {
+              id: metaId,
+              label: displayValue,
+              size: 2,
+              kind: "meta"
+            }
+          };
+        }
+
+        const edgeId = safeId("e:", bookId + "|" + metaId + "|" + predLN);
+        if (!edges[edgeId]) {
+          edges[edgeId] = {
+            data: {
+              id: edgeId,
+              source: bookId,
+              target: metaId,
+              label: predLabel
+            }
+          };
+        }
+
+        if (!bookMeta[bookId]["All fields"][predLN]) {
+          bookMeta[bookId]["All fields"][predLN] = [];
+        }
+        bookMeta[bookId]["All fields"][predLN].push(displayValue);
+      });
+
+      Object.keys(bookMeta).forEach(bookId => {
+        const all = bookMeta[bookId]["All fields"];
+        for (const k of Object.keys(all)) {
+          all[k] = uniq(all[k]);
+        }
+        bookMeta[bookId]["Title"] = uniq(bookMeta[bookId]["Title"]);
+      });
+
+      cy.add(Object.values(nodes));
+      cy.add(Object.values(edges));
+      cy.layout({ name: "cose" }).run();
+
+      detailsContent.innerHTML = `<span class="muted">Click a <b>book title</b> node to see metadata.</span>`;
+    }
+
+    async function expandFromMetadataNode(node) {
+      const clickedValue = node.data("label");
+      if (!clickedValue) return;
+
+      setStatus(`Expanding from “${clickedValue}”…`);
+
+      try {
+        const q = escapeForSparqlString(clickedValue.toLowerCase());
+
+        const sparql = `
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 PREFIX dcterms: <http://purl.org/dc/terms/>
@@ -381,139 +495,23 @@ SELECT ?row ?p ?o ?oLabel WHERE {
   }
 }
 LIMIT 3000
-    `;
+        `;
 
-    const data = await sparqlSelect(sparql);
-    mergeBookCentricGraph(data, node.id());
-
-    setStatus(`Expanded from “${clickedValue}”`);
-  } catch (e) {
-    console.error(e);
-    setStatus("Expansion error");
-    alert("Could not expand related nodes. Check console for details.");
-  }
-}
-
-function mergeBookCentricGraph(data, clickedMetaId = null) {
-  const newNodes = {};
-  const newEdges = {};
-
-  // 1) Gather titles per row
-  const rowTitle = {};
-  data.results.bindings.forEach(b => {
-    const row = b.row.value;
-    const p = b.p.value;
-    const o = b.o;
-
-    if (o.type === "literal" && matchesAnyLocalName(p, FIELD_NAMES.title)) {
-      rowTitle[row] = o.value;
-    }
-  });
-
-  // 2) Build nodes/edges without removing the existing graph
-  data.results.bindings.forEach(b => {
-    const row = b.row.value;
-    const p = b.p.value;
-    const o = b.o;
-
-    const title = rowTitle[row];
-    if (!title) return;
-
-    const bookId = safeId("book:", title);
-    const bookLabel = title;
-
-    // Add book node if missing
-    if (cy.getElementById(bookId).empty() && !newNodes[bookId]) {
-      newNodes[bookId] = {
-        data: { id: bookId, label: bookLabel, size: 10, kind: "book" }
-      };
+        const data = await sparqlSelect(sparql);
+        mergeBookCentricGraph(data, node.id());
+        setStatus(`Expanded from “${clickedValue}”`);
+      } catch (e) {
+        console.error(e);
+        setStatus("Expansion error");
+        alert("Could not expand related nodes. Check console for details.");
+      }
     }
 
-    // Ensure metadata store exists
-    if (!bookMeta[bookId]) {
-      bookMeta[bookId] = {
-        "Title": [title],
-        "All fields": {}
-      };
-    }
+    function mergeBookCentricGraph(data, clickedMetaId = null) {
+      const newNodes = {};
+      const newEdges = {};
 
-    if (matchesAnyLocalName(p, FIELD_NAMES.title)) return;
-
-    const predLN = localName(p);
-    const predLabel = predLN;
-
-    let stableValue;
-    let displayValue;
-
-    if (o.type === "literal") {
-      stableValue = o.value;
-      displayValue = o.value;
-    } else if (o.type === "uri") {
-      stableValue = o.value;
-      displayValue = b.oLabel ? b.oLabel.value : localName(o.value);
-    } else {
-      return;
-    }
-
-    const metaId = safeId("meta:", predLN + "|" + stableValue);
-
-    if (cy.getElementById(metaId).empty() && !newNodes[metaId]) {
-      newNodes[metaId] = {
-        data: { id: metaId, label: displayValue, size: 2, kind: "meta" }
-      };
-    }
-
-    const edgeId = safeId("e:", bookId + "|" + metaId + "|" + predLN);
-    if (cy.getElementById(edgeId).empty() && !newEdges[edgeId]) {
-      newEdges[edgeId] = {
-        data: { id: edgeId, source: bookId, target: metaId, label: predLabel }
-      };
-    }
-
-    if (!bookMeta[bookId]["All fields"][predLN]) {
-      bookMeta[bookId]["All fields"][predLN] = [];
-    }
-    bookMeta[bookId]["All fields"][predLN].push(displayValue);
-  });
-
-  // De-dupe stored metadata
-  Object.keys(bookMeta).forEach(bookId => {
-    const all = bookMeta[bookId]["All fields"];
-    for (const k of Object.keys(all)) {
-      all[k] = uniq(all[k]);
-    }
-    bookMeta[bookId]["Title"] = uniq(bookMeta[bookId]["Title"]);
-  });
-
-  // Add new elements
-  cy.add(Object.values(newNodes));
-  cy.add(Object.values(newEdges));
-
-  // Re-layout while keeping context
-  cy.layout({
-    name: "cose",
-    animate: true,
-    fit: true,
-    padding: 30
-  }).run();
-
-  // Re-highlight clicked metadata node and its neighborhood
-  if (clickedMetaId && !cy.getElementById(clickedMetaId).empty()) {
-    cy.elements().removeClass("faded highlighted");
-    const node = cy.getElementById(clickedMetaId);
-    const neighborhood = node.closedNeighborhood();
-    neighborhood.addClass("highlighted");
-    cy.elements().not(neighborhood).addClass("faded");
-  }
-}     
- cy.elements().remove();
-      bookMeta = {};
-
-      const nodes = {};
-      const edges = {};
-
-      // 1) Gather titles per row
-      const rowTitle = {}; // rowURI -> titleString
+      const rowTitle = {};
       data.results.bindings.forEach(b => {
         const row = b.row.value;
         const p = b.p.value;
@@ -524,7 +522,6 @@ function mergeBookCentricGraph(data, clickedMetaId = null) {
         }
       });
 
-      // 2) Build nodes/edges centered on book title
       data.results.bindings.forEach(b => {
         const row = b.row.value;
         const p = b.p.value;
@@ -534,26 +531,30 @@ function mergeBookCentricGraph(data, clickedMetaId = null) {
         if (!title) return;
 
         const bookId = safeId("book:", title);
-        const bookLabel = title;
 
-        // create book node (large)
-        if (!nodes[bookId]) {
-          nodes[bookId] = { data: { id: bookId, label: bookLabel, size: 10, kind: "book" } };
-
-          // Store title + an "All fields" map for guaranteed display
-          bookMeta[bookId] = {
-            "Title": [title],
-            "All fields": {} // predicate -> [values...]
+        if (cy.getElementById(bookId).empty() && !newNodes[bookId]) {
+          newNodes[bookId] = {
+            data: {
+              id: bookId,
+              label: title,
+              size: 10,
+              kind: "book"
+            }
           };
         }
 
-        // Skip title predicate (used to identify the book node)
+        if (!bookMeta[bookId]) {
+          bookMeta[bookId] = {
+            "Title": [title],
+            "All fields": {}
+          };
+        }
+
         if (matchesAnyLocalName(p, FIELD_NAMES.title)) return;
 
         const predLN = localName(p);
         const predLabel = predLN;
 
-        // Accept both literal and URI objects
         let stableValue;
         let displayValue;
 
@@ -567,49 +568,64 @@ function mergeBookCentricGraph(data, clickedMetaId = null) {
           return;
         }
 
-        // Create metadata node (small)
         const metaId = safeId("meta:", predLN + "|" + stableValue);
-        if (!nodes[metaId]) {
-          nodes[metaId] = { data: { id: metaId, label: displayValue, size: 2, kind: "meta" } };
-        }
 
-        // Create edge book -> metadata (de-dupe)
-        const edgeId = safeId("e:", bookId + "|" + metaId + "|" + predLN);
-        if (!edges[edgeId]) {
-          edges[edgeId] = {
-            data: { id: edgeId, source: bookId, target: metaId, label: predLabel }
+        if (cy.getElementById(metaId).empty() && !newNodes[metaId]) {
+          newNodes[metaId] = {
+            data: {
+              id: metaId,
+              label: displayValue,
+              size: 2,
+              kind: "meta"
+            }
           };
         }
 
-        // GUARANTEED: store every predicate/value under "All fields"
+        const edgeId = safeId("e:", bookId + "|" + metaId + "|" + predLN);
+        if (cy.getElementById(edgeId).empty() && !newEdges[edgeId]) {
+          newEdges[edgeId] = {
+            data: {
+              id: edgeId,
+              source: bookId,
+              target: metaId,
+              label: predLabel
+            }
+          };
+        }
+
         if (!bookMeta[bookId]["All fields"][predLN]) {
           bookMeta[bookId]["All fields"][predLN] = [];
         }
         bookMeta[bookId]["All fields"][predLN].push(displayValue);
       });
 
-      // De-dupe all fields
       Object.keys(bookMeta).forEach(bookId => {
         const all = bookMeta[bookId]["All fields"];
         for (const k of Object.keys(all)) {
           all[k] = uniq(all[k]);
         }
-        // De-dupe Title array too
         bookMeta[bookId]["Title"] = uniq(bookMeta[bookId]["Title"]);
       });
 
-      cy.add(Object.values(nodes));
-      cy.add(Object.values(edges));
-      cy.layout({ name: "cose" }).run();
+      cy.add(Object.values(newNodes));
+      cy.add(Object.values(newEdges));
 
-      detailsContent.innerHTML = `<span class="muted">Click a <b>book title</b> node to see metadata.</span>`;
+      cy.layout({
+        name: "cose",
+        animate: true,
+        fit: true,
+        padding: 30
+      }).run();
+
+      if (clickedMetaId && !cy.getElementById(clickedMetaId).empty()) {
+        cy.elements().removeClass("faded highlighted");
+        const clickedNode = cy.getElementById(clickedMetaId);
+        const neighborhood = clickedNode.closedNeighborhood();
+        neighborhood.addClass("highlighted");
+        cy.elements().not(neighborhood).addClass("faded");
+      }
     }
 
-    /**
-     * =========================
-     * Reset graph
-     * =========================
-     */
     function resetGraph(resetUI = true) {
       cy.elements().removeClass("faded highlighted");
       cy.elements().remove();
@@ -621,93 +637,57 @@ function mergeBookCentricGraph(data, clickedMetaId = null) {
       }
     }
 
-    /**
-     * =========================
-     * Click behaviors
-     * =========================
-     * - Highlights neighborhood
-     * - GUARANTEED details: displays ALL fields from bookMeta[bookId]["All fields"]
-     */
-cy.on("tap", "node", async function(evt) {
-  const node = evt.target;
+    cy.on("tap", "node", async function(evt) {
+      const node = evt.target;
 
-  cy.elements().removeClass("faded highlighted");
-  const neighborhood = node.closedNeighborhood();
-  neighborhood.addClass("highlighted");
-  cy.elements().not(neighborhood).addClass("faded");
+      cy.elements().removeClass("faded highlighted");
+      const neighborhood = node.closedNeighborhood();
+      neighborhood.addClass("highlighted");
+      cy.elements().not(neighborhood).addClass("faded");
 
-  if (node.data("kind") === "book") {
-    const meta = bookMeta[node.id()] || {};
-    const allFields = meta["All fields"] || {};
+      if (node.data("kind") === "book") {
+        const meta = bookMeta[node.id()] || {};
+        const allFields = meta["All fields"] || {};
 
-    let html = "";
-    html += `<div class="detail-label">Title</div>`;
-    html += (meta["Title"] && meta["Title"][0])
-      ? `<div class="detail-value">${escapeHtml(meta["Title"][0])}</div>`
-      : `<div class="muted">—</div>`;
+        let html = "";
+        html += `<div class="detail-label">Title</div>`;
+        html += (meta["Title"] && meta["Title"][0])
+          ? `<div class="detail-value">${escapeHtml(meta["Title"][0])}</div>`
+          : `<div class="muted">—</div>`;
 
-    const keys = Object.keys(allFields).sort((a, b) => a.localeCompare(b));
+        const keys = Object.keys(allFields).sort((a, b) => a.localeCompare(b));
 
-    if (keys.length === 0) {
-      html += `<div class="muted" style="margin-top:10px;">No other metadata found for this book in the current results.</div>`;
-    } else {
-      keys.forEach(key => {
-        html += `<div class="detail-label">${escapeHtml(key)}</div>`;
-        const vals = allFields[key] || [];
-        if (vals.length === 0) {
-          html += `<div class="muted">—</div>`;
+        if (keys.length === 0) {
+          html += `<div class="muted" style="margin-top:10px;">No other metadata found for this book in the current results.</div>`;
         } else {
-          vals.forEach(v => {
-            html += `<div class="detail-value">${escapeHtml(v)}</div>`;
+          keys.forEach(key => {
+            html += `<div class="detail-label">${escapeHtml(key)}</div>`;
+            const vals = allFields[key] || [];
+            if (vals.length === 0) {
+              html += `<div class="muted">—</div>`;
+            } else {
+              vals.forEach(v => {
+                html += `<div class="detail-value">${escapeHtml(v)}</div>`;
+              });
+            }
           });
         }
-      });
-    }
 
-    detailsContent.innerHTML = html;
-    return;
-  }
-
-  if (node.data("kind") === "meta") {
-    detailsContent.innerHTML = `
-      <div class="detail-label">Metadata value</div>
-      <div class="detail-value">${escapeHtml(node.data("label"))}</div>
-      <div class="muted" style="margin-top:10px;">
-        Expanding the graph to show related books and metadata…
-      </div>
-    `;
-
-    await expandFromMetadataNode(node);
-  }
-});
-
-      // Render Title first (always present)
-      let html = "";
-      html += `<div class="detail-label">Title</div>`;
-      html += (meta["Title"] && meta["Title"][0])
-        ? `<div class="detail-value">${escapeHtml(meta["Title"][0])}</div>`
-        : `<div class="muted">—</div>`;
-
-      // Render everything else (guaranteed)
-      const keys = Object.keys(allFields).sort((a, b) => a.localeCompare(b));
-
-      if (keys.length === 0) {
-        html += `<div class="muted" style="margin-top:10px;">No other metadata found for this book in the current results.</div>`;
-      } else {
-        keys.forEach(key => {
-          html += `<div class="detail-label">${escapeHtml(key)}</div>`;
-          const vals = allFields[key] || [];
-          if (vals.length === 0) {
-            html += `<div class="muted">—</div>`;
-          } else {
-            vals.forEach(v => {
-              html += `<div class="detail-value">${escapeHtml(v)}</div>`;
-            });
-          }
-        });
+        detailsContent.innerHTML = html;
+        return;
       }
 
-      detailsContent.innerHTML = html;
+      if (node.data("kind") === "meta") {
+        detailsContent.innerHTML = `
+          <div class="detail-label">Metadata value</div>
+          <div class="detail-value">${escapeHtml(node.data("label"))}</div>
+          <div class="muted" style="margin-top:10px;">
+            Expanding the graph to show related books and metadata…
+          </div>
+        `;
+
+        await expandFromMetadataNode(node);
+      }
     });
 
     cy.on("tap", function(evt) {
@@ -716,7 +696,12 @@ cy.on("tap", "node", async function(evt) {
       }
     });
 
-    // Run autocomplete on load
+    document.getElementById("searchBox").addEventListener("keydown", function(e) {
+      if (e.key === "Enter") {
+        runSearch();
+      }
+    });
+
     loadSuggestions();
   </script>
 </body>
