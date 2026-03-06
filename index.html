@@ -170,24 +170,55 @@
             "label": "data(label)",
             "background-color": "#4a7bd0",
             "color": "#ffffff",
+
             "text-valign": "center",
             "text-halign": "center",
+
             "text-wrap": "wrap",
-            "text-max-width": "140px",
-            "width": "mapData(size, 1, 10, 24, 70)",
-            "height": "mapData(size, 1, 10, 24, 70)",
+            "text-max-width": "90px",
+
+            "font-size": 11,
+
+            "width": "mapData(size, 1, 10, 30, 80)",
+            "height": "mapData(size, 1, 10, 30, 80)",
+
+            "padding": "6px"
+          }
+        },
+        {
+          selector: 'node[kind="book"]',
+          style: {
+            "background-color": "#2d5fb8",
             "font-size": 12
+          }
+        },
+        {
+          selector: 'node[kind="meta"]',
+          style: {
+            "background-color": "#8faee6",
+            "color": "#ffffff",
+            "font-size": 10
           }
         },
         {
           selector: "edge",
           style: {
             "label": "data(label)",
+
             "curve-style": "bezier",
             "target-arrow-shape": "triangle",
+
             "line-color": "#888",
             "target-arrow-color": "#888",
-            "font-size": 9,
+
+            "font-size": 10,
+
+            "text-background-color": "#ffffff",
+            "text-background-opacity": 1,
+            "text-background-padding": "3px",
+
+            "text-margin-y": "-6px",
+
             "text-rotation": "autorotate"
           }
         },
@@ -209,7 +240,17 @@
           }
         }
       ],
-      layout: { name: "cose" }
+      layout: {
+        name: "cose",
+        animate: true,
+        fit: true,
+        padding: 40,
+        nodeRepulsion: 900000,
+        idealEdgeLength: 120,
+        edgeElasticity: 0.45,
+        gravity: 0.25,
+        numIter: 2500
+      }
     });
 
     function setStatus(text) {
@@ -266,7 +307,7 @@
       return res.json();
     }
 
-    // REPLACED normalizeDisplayValue() with one tuned to your TTL
+    // Tuned to your TTL
     function normalizeDisplayValue(predLN, displayValue) {
       const pred = predLN.toLowerCase();
 
@@ -289,6 +330,20 @@
       }
 
       return displayValue;
+    }
+
+    function runCoseLayout() {
+      cy.layout({
+        name: "cose",
+        animate: true,
+        fit: true,
+        padding: 40,
+        nodeRepulsion: 900000,
+        idealEdgeLength: 120,
+        edgeElasticity: 0.45,
+        gravity: 0.25,
+        numIter: 2500
+      }).run();
     }
 
     async function runSearch() {
@@ -394,7 +449,6 @@ LIMIT 5000
           };
         }
 
-        // Skip title edge creation; the title is the book node label
         if (matchesAnyLocalName(p, FIELD_NAMES.title)) return;
 
         const predLN = localName(p);
@@ -418,8 +472,6 @@ LIMIT 5000
 
         displayValue = normalizeDisplayValue(predLN, displayValue);
 
-        // IMPORTANT: metaId uses predicate + exact stable value
-        // so clicking LC Class N can query all books sharing ex:Subject_N
         const metaId = safeId("meta:", p + "|" + stableValue);
 
         if (!nodes[metaId]) {
@@ -464,7 +516,7 @@ LIMIT 5000
 
       cy.add(Object.values(nodes));
       cy.add(Object.values(edges));
-      cy.layout({ name: "cose" }).run();
+      runCoseLayout();
 
       detailsContent.innerHTML = `<span class="muted">Click a <b>book title</b> node to see metadata.</span>`;
     }
@@ -581,13 +633,7 @@ LIMIT 5000
 
       cy.add(Object.values(newNodes));
       cy.add(Object.values(newEdges));
-
-      cy.layout({
-        name: "cose",
-        animate: true,
-        fit: true,
-        padding: 30
-      }).run();
+      runCoseLayout();
 
       if (clickedMetaId && !cy.getElementById(clickedMetaId).empty()) {
         cy.elements().removeClass("faded highlighted");
