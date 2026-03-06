@@ -109,8 +109,8 @@
     <h2>Weeded Library Data Knowledge Graph Explorer</h2>
     <p>
       This interactive visualization represents withdrawn print book data from Hunter College Libraries as a knowledge graph.
-      Search for titles, subjects, locations, authors, and more. Results are retrieved from RDF stored in TriplyDB via a SPARQL
-      endpoint and rendered as an interactive network.
+      Search for titles, subjects, locations, authors, call numbers, classes, and more. Results are retrieved from RDF stored in
+      TriplyDB via a SPARQL endpoint and rendered as an interactive network.
     </p>
   </div>
 
@@ -323,10 +323,29 @@ SELECT ?row ?p ?o ?oLabel WHERE {
   {
     SELECT DISTINCT ?row WHERE {
       ?row ?p1 ?o1 .
-      FILTER(isLiteral(?o1))
-      FILTER(CONTAINS(LCASE(STR(?o1)), "${q}"))
-    } LIMIT 50
+
+      {
+        FILTER(isLiteral(?o1))
+        FILTER(CONTAINS(LCASE(STR(?o1)), "${q}"))
+      }
+
+      UNION
+
+      {
+        FILTER(isIRI(?o1))
+        OPTIONAL {
+          ?o1 (rdfs:label|skos:prefLabel|dcterms:title) ?o1Label .
+        }
+        FILTER(
+          (BOUND(?o1Label) && CONTAINS(LCASE(STR(?o1Label)), "${q}"))
+          ||
+          CONTAINS(LCASE(REPLACE(STR(?o1), '^.*[/#]', '')), "${q}")
+        )
+      }
+    }
+    LIMIT 50
   }
+
   ?row ?p ?o .
 
   OPTIONAL {
