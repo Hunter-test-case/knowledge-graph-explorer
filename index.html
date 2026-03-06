@@ -109,14 +109,13 @@
     <h2>Weeded Library Data Knowledge Graph Explorer</h2>
     <p>
       This interactive visualization represents withdrawn print book data from Hunter College Libraries as a knowledge graph.
-      Search for titles, subjects, locations, authors, call numbers, classes, and more. Results are retrieved from RDF stored in
+      Search across bibliographic metadata and explore connections among records. Results are retrieved from RDF stored in
       TriplyDB via a SPARQL endpoint and rendered as an interactive network.
     </p>
   </div>
 
   <div id="controls">
-    <input id="searchBox" list="suggestions" placeholder="Search titles, subjects, locations, authors…" />
-    <datalist id="suggestions"></datalist>
+    <input id="searchBox" placeholder="Search titles and other bibliographic metadata…" />
 
     <button onclick="runSearch()">Search</button>
     <button onclick="resetGraph()">Reset</button>
@@ -148,13 +147,6 @@
       author: ["author", "creator", "contributor"],
       callNumber: ["callnumber"]
     };
-
-    const AUTOCOMPLETE_FIELDS = [
-      ...FIELD_NAMES.title,
-      ...FIELD_NAMES.subject,
-      ...FIELD_NAMES.location,
-      ...FIELD_NAMES.author
-    ];
 
     let bookMeta = {};
 
@@ -267,40 +259,6 @@
       return res.json();
     }
 
-    async function loadSuggestions() {
-      try {
-        setStatus("Loading suggestions…");
-
-        const pattern = AUTOCOMPLETE_FIELDS
-          .map(x => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-          .join("|");
-
-        const sparql = `
-          SELECT DISTINCT ?value WHERE {
-            ?s ?p ?value .
-            FILTER(isLiteral(?value))
-            FILTER(REGEX(STR(?p), "(${pattern})$", "i"))
-          }
-          LIMIT 200
-        `;
-
-        const data = await sparqlSelect(sparql);
-        const list = document.getElementById("suggestions");
-        list.innerHTML = "";
-
-        data.results.bindings.forEach(row => {
-          const option = document.createElement("option");
-          option.value = row.value.value;
-          list.appendChild(option);
-        });
-
-        setStatus("Ready");
-      } catch (e) {
-        console.error(e);
-        setStatus("Ready (no suggestions)");
-      }
-    }
-
     async function runSearch() {
       const raw = document.getElementById("searchBox").value.trim();
       if (!raw) {
@@ -322,9 +280,18 @@ PREFIX dcterms: <http://purl.org/dc/terms/>
 SELECT ?row ?p ?o ?oLabel WHERE {
   {
     SELECT DISTINCT ?row WHERE {
-      ?row ?p1 ?o1 .
 
       {
+        ?row ?p1 ?o1 .
+        FILTER(isLiteral(?o1))
+        FILTER(CONTAINS(LCASE(STR(?o1)), "${q}"))
+        FILTER(CONTAINS(LCASE(STR(?p1)), "title"))
+      }
+
+      UNION
+
+      {
+        ?row ?p1 ?o1 .
         FILTER(isLiteral(?o1))
         FILTER(CONTAINS(LCASE(STR(?o1)), "${q}"))
       }
@@ -332,18 +299,21 @@ SELECT ?row ?p ?o ?oLabel WHERE {
       UNION
 
       {
+        ?row ?p1 ?o1 .
         FILTER(isIRI(?o1))
-        OPTIONAL {
-          ?o1 (rdfs:label|skos:prefLabel|dcterms:title) ?o1Label .
-        }
-        FILTER(
-          (BOUND(?o1Label) && CONTAINS(LCASE(STR(?o1Label)), "${q}"))
-          ||
-          CONTAINS(LCASE(REPLACE(STR(?o1), '^.*[/#]', '')), "${q}")
-        )
+        ?o1 (rdfs:label|skos:prefLabel|dcterms:title) ?o1Label .
+        FILTER(CONTAINS(LCASE(STR(?o1Label)), "${q}"))
+      }
+
+      UNION
+
+      {
+        ?row ?p1 ?o1 .
+        FILTER(isIRI(?o1))
+        FILTER(CONTAINS(LCASE(REPLACE(STR(?o1), '^.*[/#]', '')), "${q}"))
       }
     }
-    LIMIT 50
+    LIMIT 100
   }
 
   ?row ?p ?o .
@@ -353,10 +323,17 @@ SELECT ?row ?p ?o ?oLabel WHERE {
     ?o (rdfs:label|skos:prefLabel|dcterms:title) ?oLabel .
   }
 }
-LIMIT 3000
+LIMIT 5000
         `;
 
         const data = await sparqlSelect(sparql);
+
+        if (!data.results.bindings.length) {
+          setStatus(`No results for “${raw}”`);
+          detailsContent.innerHTML = `<span class="muted">No matching records found.</span>`;
+          return;
+        }
+
         buildBookCentricGraph(data);
         setStatus(`Showing results for “${raw}”`);
       } catch (e) {
@@ -737,8 +714,6 @@ LIMIT 5000
         runSearch();
       }
     });
-
-    loadSuggestions();
   </script>
 </body>
 </html>
