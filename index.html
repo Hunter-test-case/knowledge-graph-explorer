@@ -40,7 +40,7 @@
     #searchBox {
       padding: 8px;
       font-size: 14px;
-      width: 340px;
+      width: 360px;
     }
 
     button {
@@ -109,17 +109,15 @@
     <h2>Weeded Library Data Knowledge Graph Explorer</h2>
     <p>
       This interactive visualization represents withdrawn print book data from Hunter College Libraries as a knowledge graph.
-      Search across bibliographic metadata and explore connections among records. Results are retrieved from RDF stored in
-      TriplyDB via a SPARQL endpoint and rendered as an interactive network.
+      Search by title and explore connections among bibliographic metadata values. Clicking a metadata node expands the graph to
+      show other books that share that exact same value.
     </p>
   </div>
 
   <div id="controls">
-    <input id="searchBox" placeholder="Search titles and other bibliographic metadata…" />
-
+    <input id="searchBox" placeholder="Search by title..." />
     <button onclick="runSearch()">Search</button>
     <button onclick="resetGraph()">Reset</button>
-
     <span class="pill" id="statusPill">Ready</span>
   </div>
 
@@ -129,7 +127,8 @@
     <div id="details">
       <h3>Details</h3>
       <div class="muted">
-        Click a <b>book title</b> node to see metadata. Click a <b>metadata</b> node to expand the graph in place and show all other books that share that exact same value.
+        Click a <b>book title</b> node to see metadata. Click a <b>metadata</b> node such as <b>LC Class N</b> to expand the graph
+        and show all other books with that exact same value.
       </div>
       <div id="detailsContent" style="margin-top: 12px;">
         <span class="muted">No selection yet.</span>
@@ -140,10 +139,10 @@
   <script>
     const endpoint = "https://api.triplydb.com/datasets/Allisonmransom/deleted-records-knowledge-graph/sparql";
 
+    // Adjust these if your predicate names differ.
     const FIELD_NAMES = {
       title: ["title"],
-      subject: ["subject"],
-      location: ["location"],
+      subject: ["subject", "lcclass", "class"],
       author: ["author", "creator", "contributor"],
       callNumber: ["callnumber"]
     };
@@ -262,7 +261,7 @@
     async function runSearch() {
       const raw = document.getElementById("searchBox").value.trim();
       if (!raw) {
-        alert("Enter a search term");
+        alert("Enter a title");
         return;
       }
 
@@ -272,6 +271,7 @@
       try {
         const q = escapeForSparqlString(raw.toLowerCase());
 
+        // Title-focused search first.
         const sparql = `
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
@@ -280,38 +280,10 @@ PREFIX dcterms: <http://purl.org/dc/terms/>
 SELECT ?row ?p ?o ?oLabel WHERE {
   {
     SELECT DISTINCT ?row WHERE {
-
-      {
-        ?row ?p1 ?o1 .
-        FILTER(isLiteral(?o1))
-        FILTER(CONTAINS(LCASE(STR(?o1)), "${q}"))
-        FILTER(CONTAINS(LCASE(STR(?p1)), "title"))
-      }
-
-      UNION
-
-      {
-        ?row ?p1 ?o1 .
-        FILTER(isLiteral(?o1))
-        FILTER(CONTAINS(LCASE(STR(?o1)), "${q}"))
-      }
-
-      UNION
-
-      {
-        ?row ?p1 ?o1 .
-        FILTER(isIRI(?o1))
-        ?o1 (rdfs:label|skos:prefLabel|dcterms:title) ?o1Label .
-        FILTER(CONTAINS(LCASE(STR(?o1Label)), "${q}"))
-      }
-
-      UNION
-
-      {
-        ?row ?p1 ?o1 .
-        FILTER(isIRI(?o1))
-        FILTER(CONTAINS(LCASE(REPLACE(STR(?o1), '^.*[/#]', '')), "${q}"))
-      }
+      ?row ?p1 ?o1 .
+      FILTER(isLiteral(?o1))
+      FILTER(CONTAINS(LCASE(STR(?o1)), "${q}"))
+      FILTER(CONTAINS(LCASE(STR(?p1)), "title"))
     }
     LIMIT 100
   }
@@ -330,7 +302,7 @@ LIMIT 5000
 
         if (!data.results.bindings.length) {
           setStatus(`No results for “${raw}”`);
-          detailsContent.innerHTML = `<span class="muted">No matching records found.</span>`;
+          detailsContent.innerHTML = `<span class="muted">No matching title found.</span>`;
           return;
         }
 
@@ -341,6 +313,16 @@ LIMIT 5000
         setStatus("Error");
         alert("Error querying SPARQL endpoint. Check console for details.");
       }
+    }
+
+    function normalizeDisplayValue(predLN, displayValue) {
+      // Optional polish: if your class values appear as just "N", display them as "LC Class N"
+      if (predLN.toLowerCase().includes("class")) {
+        if (!displayValue.toLowerCase().startsWith("lc class")) {
+          return "LC Class " + displayValue;
+        }
+      }
+      return displayValue;
     }
 
     function buildBookCentricGraph(data) {
@@ -407,6 +389,8 @@ LIMIT 5000
         } else {
           return;
         }
+
+        displayValue = normalizeDisplayValue(predLN, displayValue);
 
         const metaId = safeId("meta:", p + "|" + stableValue);
 
@@ -520,6 +504,8 @@ LIMIT 5000
         } else {
           return;
         }
+
+        displayValue = normalizeDisplayValue(predLN, displayValue);
 
         const metaId = safeId("meta:", p + "|" + stableValue);
 
