@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Weeded Library Data Knowledge Graph Explorer</title>
+  <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
+
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #ffffff; }
+
+    #header {
+      padding: 20px;
+      background: #f4f6fb;
+      border-bottom: 1px solid #d6dbe8;
+    }
+    #header h2 { margin: 0; }
+    #header p { max-width: 980px; line-height: 1.45; margin: 8px 0 0 0; }
+
+    #controls {
+      padding: 12px 15px;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    #searchBox { padding: 8px; font-size: 14px; width: 320px; }
+    button { padding: 8px 12px; font-size: 14px; cursor: pointer; }
+
+    #main { display: flex; height: 75vh; width: 100%; }
+    #cy { flex: 3; min-width: 0; }
+    #details {
+      flex: 1;
+      min-width: 260px;
+      border-left: 1px solid #ddd;
+      padding: 15px;
+      font-size: 14px;
+      overflow: auto;
+      background: #fafafa;
+    }
+    #details h3 { margin: 0 0 8px 0; font-size: 14px; }
+    .detail-label { font-weight: bold; margin-top: 10px; }
+    .detail-value { margin-top: 4px; }
+    .muted { color: #666; font-size: 12px; line-height: 1.35; }
+    .pill {
+      display: inline-block;
+      font-size: 12px;
+      padding: 3px 8px;
+      border: 1px solid #ddd;
+      border-radius: 999px;
+      background: #fff;
+      color: #555;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="header">
+    <h2>Weeded Library Data Knowledge Graph Explorer</h2>
+    <p>
+      This interactive visualization represents withdrawn print book data from Hunter College Libraries as a knowledge graph.
+      Search for titles, subjects, locations, authors, and more. Results are retrieved from RDF stored in TriplyDB via a SPARQL
+      endpoint and rendered as an interactive network.
+    </p>
+  </div>
+
+  <div id="controls">
+    <input id="searchBox" list="suggestions" placeholder="Search titles, subjects, locations, authors…" />
+    <datalist id="suggestions"></datalist>
+
+    <button onclick="runSearch()">Search</button>
+    <button onclick="resetGraph()">Reset</button>
+
+    <span class="pill" id="statusPill">Ready</span>
+  </div>
+
+  <div id="main">
+    <div id="cy"></div>
+
+    <div id="details">
+      <h3>Details</h3>
+      <div class="muted">
+        Click a <b>book title</b> node to see all metadata captured from the current query results.
+      </div>
+      <div id="detailsContent" style="margin-top: 12px;">
+        <span class="muted">No selection yet.</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * =========================
+     * CONFIG
+     * =========================
+     */
+    const endpoint = "https://api.triplydb.com/datasets/Allisonmransom/deleted-records-knowledge-graph/sparql";
+
+    // Match your real predicates from the sample:
+    const FIELD_NAMES = {
+      title: ["title"],
+      subject: ["subject"],
+      location: ["location"],
+      author: ["author", "creator", "contributor"],
+      callNumber: ["callnumber"]
+    };
+
+    const AUTOCOMPLETE_FIELDS = [
+      ...FIELD_NAMES.title,
+      ...FIELD_NAMES.subject,
+      ...FIELD_NAMES.location,
+      ...FIELD_NAMES.author
+    ];
+
+    /**
+     * =========================
+     * Cytoscape init
+     * =========================
+     */
+    let cy = cytoscape({
+      container: document.getElementById("cy"),
+      elements: [],
+      style: [
+        {
+          selector: "node",
+          style: {
+            "label": "data(label)",
+            "background-color": "#4a7bd0",
+            "color": "#ffffff",
+            "text-valign": "center",
+            "text-halign": "center",
+            "text-wrap": "wrap",
+            "text-max-width": "140px",
+            "width": "mapData(size, 1, 10, 24, 70)",
+            "height": "mapData(size, 1, 10, 24, 70)",
+            "font-size": 12
+          }
+        },
+        {
+          selector: "edge",
+          style: {
+            "label": "data(label)",
+            "curve-style": "bezier",
+            "target-arrow-shape": "triangle",
+            "line-color": "#888",
+            "target-arrow-color": "#888",
+            "font-size": 9,
+            "text-rotation": "autorotate"
+          }
+        },
+        {
+          selector: ".highlighted",
+          style: {
+            "background-color": "#ffcc00",
+            "line-color": "#ffcc00",
+            "target-arrow-color": "#ffcc00",
+            "transition-property": "background-color, line-color, target-arrow-color",
+            "transition-duration": "0.3s"
+          }
+        },
+        {
+          selector: ".faded",
+          style: {
+            "opacity": 0.15,
+            "text-opacity": 0.1
+          }
+        }
+      ],
+      layout: { name: "cose" }
+    });
+
+    const statusPill = document.getElementById("statusPill");
+    const detailsContent = document.getElementById("detailsContent");
+
+    /**
+     * =========================
+     * Helpers
+     * =========================
+     */
+    function setStatus(text) { statusPill.textContent = text; }
+
+    function escapeForSparqlString(s) {
+      return String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    }
+
+    function localName(uri) {
+      let u = String(uri);
+      let i = Math.max(u.lastIndexOf("#"), u.lastIndexOf("/"));
+      return i >= 0 ? u.slice(i + 1) : u;
+    }
+
+    function matchesAnyLocalName(uri, list) {
+      const ln = localName(uri).toLowerCase();
+      return list.some(x => ln.includes(String(x).toLowerCase()));
+    }
+
+    function safeId(prefix, s) {
+      return prefix + encodeURIComponent(String(s));
+    }
+
+    function uniq(arr) { return Array.from(new Set(arr)); }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    /**
+     * =========================
+     * Data stores
+     * =========================
+     * bookMeta:
+     *  - Always includes Title
+     *  - Also includes a special key "All fields" that stores every predicate/value captured
+     */
+    let bookMeta = {}; // bookId -> { Title: string, "All fields": { pred: [values...] }, ...optional buckets }
+
+    /**
+     * =========================
+     * SPARQL fetch
+     * =========================
+     */
+    async function sparqlSelect(query) {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/sparql-query",
+          "Accept": "application/sparql-results+json"
+        },
+        body: query
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`SPARQL HTTP ${res.status}: ${txt.slice(0, 200)}`);
+      }
+      return res.json();
+    }
+
+    /**
+     * =========================
+     * Autocomplete
+     * =========================
+     */
+    async function loadSuggestions() {
+      try {
+        setStatus("Loading suggestions…");
+
+        const pattern = AUTOCOMPLETE_FIELDS
+          .map(x => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          .join("|");
+
+        const sparql = `
+          SELECT DISTINCT ?value WHERE {
+            ?s ?p ?value .
+            FILTER(isLiteral(?value))
+            FILTER(REGEX(STR(?p), "(${pattern})$", "i"))
+          }
+          LIMIT 200
+        `;
+
+        const data = await sparqlSelect(sparql);
+        const list = document.getElementById("suggestions");
+        list.innerHTML = "";
+
+        data.results.bindings.forEach(row => {
+          const option = document.createElement("option");
+          option.value = row.value.value;
+          list.appendChild(option);
+        });
+
+        setStatus("Ready");
+      } catch (e) {
+        console.error(e);
+        setStatus("Ready (no suggestions)");
+      }
+    }
+
+    /**
+     * =========================
+     * Search + query
+     * =========================
+     */
+    async function runSearch() {
+      const raw = document.getElementById("searchBox").value.trim();
+      if (!raw) {
+        alert("Enter a search term");
+        return;
+      }
+
+      resetGraph(false);
+      setStatus("Searching…");
+
+      try {
+        const q = escapeForSparqlString(raw.toLowerCase());
+
+        const sparql = `
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+
+SELECT ?row ?p ?o ?oLabel WHERE {
+  {
+    SELECT DISTINCT ?row WHERE {
+      ?row ?p1 ?o1 .
+      FILTER(isLiteral(?o1))
+      FILTER(CONTAINS(LCASE(STR(?o1)), "${q}"))
+    } LIMIT 50
+  }
+  ?row ?p ?o .
+
+  OPTIONAL {
+    FILTER(isIRI(?o))
+    ?o (rdfs:label|skos:prefLabel|dcterms:title) ?oLabel .
+  }
+}
+LIMIT 3000
+        `;
+
+        const data = await sparqlSelect(sparql);
+        buildBookCentricGraph(data);
+
+        setStatus(`Showing results for “${raw}”`);
+      } catch (e) {
+        console.error(e);
+        setStatus("Error");
+        alert("Error querying SPARQL endpoint. Check console for details.");
+      }
+    }
+
+    /**
+     * =========================
+     * Build book-centric graph
+     * =========================
+     * - Uses title literal as the main book node (large)
+     * - Includes literal + URI objects as metadata (small)
+     * - GUARANTEES metadata appears by storing "All fields" for each book
+     */
+    function buildBookCentricGraph(data) {
+      cy.elements().remove();
+      bookMeta = {};
+
+      const nodes = {};
+      const edges = {};
+
+      // 1) Gather titles per row
+      const rowTitle = {}; // rowURI -> titleString
+      data.results.bindings.forEach(b => {
+        const row = b.row.value;
+        const p = b.p.value;
+        const o = b.o;
+
+        if (o.type === "literal" && matchesAnyLocalName(p, FIELD_NAMES.title)) {
+          rowTitle[row] = o.value;
+        }
+      });
+
+      // 2) Build nodes/edges centered on book title
+      data.results.bindings.forEach(b => {
+        const row = b.row.value;
+        const p = b.p.value;
+        const o = b.o;
+
+        const title = rowTitle[row];
+        if (!title) return;
+
+        const bookId = safeId("book:", title);
+        const bookLabel = title;
+
+        // create book node (large)
+        if (!nodes[bookId]) {
+          nodes[bookId] = { data: { id: bookId, label: bookLabel, size: 10, kind: "book" } };
+
+          // Store title + an "All fields" map for guaranteed display
+          bookMeta[bookId] = {
+            "Title": [title],
+            "All fields": {} // predicate -> [values...]
+          };
+        }
+
+        // Skip title predicate (used to identify the book node)
+        if (matchesAnyLocalName(p, FIELD_NAMES.title)) return;
+
+        const predLN = localName(p);
+        const predLabel = predLN;
+
+        // Accept both literal and URI objects
+        let stableValue;
+        let displayValue;
+
+        if (o.type === "literal") {
+          stableValue = o.value;
+          displayValue = o.value;
+        } else if (o.type === "uri") {
+          stableValue = o.value;
+          displayValue = b.oLabel ? b.oLabel.value : localName(o.value);
+        } else {
+          return;
+        }
+
+        // Create metadata node (small)
+        const metaId = safeId("meta:", predLN + "|" + stableValue);
+        if (!nodes[metaId]) {
+          nodes[metaId] = { data: { id: metaId, label: displayValue, size: 2, kind: "meta" } };
+        }
+
+        // Create edge book -> metadata (de-dupe)
+        const edgeId = safeId("e:", bookId + "|" + metaId + "|" + predLN);
+        if (!edges[edgeId]) {
+          edges[edgeId] = {
+            data: { id: edgeId, source: bookId, target: metaId, label: predLabel }
+          };
+        }
+
+        // GUARANTEED: store every predicate/value under "All fields"
+        if (!bookMeta[bookId]["All fields"][predLN]) {
+          bookMeta[bookId]["All fields"][predLN] = [];
+        }
+        bookMeta[bookId]["All fields"][predLN].push(displayValue);
+      });
+
+      // De-dupe all fields
+      Object.keys(bookMeta).forEach(bookId => {
+        const all = bookMeta[bookId]["All fields"];
+        for (const k of Object.keys(all)) {
+          all[k] = uniq(all[k]);
+        }
+        // De-dupe Title array too
+        bookMeta[bookId]["Title"] = uniq(bookMeta[bookId]["Title"]);
+      });
+
+      cy.add(Object.values(nodes));
+      cy.add(Object.values(edges));
+      cy.layout({ name: "cose" }).run();
+
+      detailsContent.innerHTML = `<span class="muted">Click a <b>book title</b> node to see metadata.</span>`;
+    }
+
+    /**
+     * =========================
+     * Reset graph
+     * =========================
+     */
+    function resetGraph(resetUI = true) {
+      cy.elements().removeClass("faded highlighted");
+      cy.elements().remove();
+      bookMeta = {};
+
+      if (resetUI) {
+        detailsContent.innerHTML = `<span class="muted">No selection yet.</span>`;
+        setStatus("Ready");
+      }
+    }
+
+    /**
+     * =========================
+     * Click behaviors
+     * =========================
+     * - Highlights neighborhood
+     * - GUARANTEED details: displays ALL fields from bookMeta[bookId]["All fields"]
+     */
+    cy.on("tap", "node", function(evt) {
+      const node = evt.target;
+
+      // Highlight neighborhood and fade others
+      cy.elements().removeClass("faded highlighted");
+      const neighborhood = node.closedNeighborhood();
+      neighborhood.addClass("highlighted");
+      cy.elements().not(neighborhood).addClass("faded");
+
+      // Details only for book nodes
+      if (node.data("kind") !== "book") {
+        detailsContent.innerHTML = `<span class="muted">Tip: click a <b>book title</b> node to see metadata.</span>`;
+        return;
+      }
+
+      const meta = bookMeta[node.id()] || {};
+      const allFields = meta["All fields"] || {};
+
+      // Render Title first (always present)
+      let html = "";
+      html += `<div class="detail-label">Title</div>`;
+      html += (meta["Title"] && meta["Title"][0])
+        ? `<div class="detail-value">${escapeHtml(meta["Title"][0])}</div>`
+        : `<div class="muted">—</div>`;
+
+      // Render everything else (guaranteed)
+      const keys = Object.keys(allFields).sort((a, b) => a.localeCompare(b));
+
+      if (keys.length === 0) {
+        html += `<div class="muted" style="margin-top:10px;">No other metadata found for this book in the current results.</div>`;
+      } else {
+        keys.forEach(key => {
+          html += `<div class="detail-label">${escapeHtml(key)}</div>`;
+          const vals = allFields[key] || [];
+          if (vals.length === 0) {
+            html += `<div class="muted">—</div>`;
+          } else {
+            vals.forEach(v => {
+              html += `<div class="detail-value">${escapeHtml(v)}</div>`;
+            });
+          }
+        });
+      }
+
+      detailsContent.innerHTML = html;
+    });
+
+    cy.on("tap", function(evt) {
+      if (evt.target === cy) {
+        cy.elements().removeClass("faded highlighted");
+      }
+    });
+
+    // Run autocomplete on load
+    loadSuggestions();
+  </script>
+</body>
+</html>
