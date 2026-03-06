@@ -130,7 +130,7 @@
     <div id="details">
       <h3>Details</h3>
       <div class="muted">
-        Click a <b>book title</b> node to see metadata. Click a <b>metadata</b> node to expand the graph in place and show related books.
+        Click a <b>book title</b> node to see metadata. Click a <b>metadata</b> node to expand the graph in place and show all other books that share that exact same value.
       </div>
       <div id="detailsContent" style="margin-top: 12px;">
         <span class="muted">No selection yet.</span>
@@ -398,18 +398,21 @@ LIMIT 3000
 
         let stableValue;
         let displayValue;
+        let objectType;
 
         if (o.type === "literal") {
           stableValue = o.value;
           displayValue = o.value;
+          objectType = "literal";
         } else if (o.type === "uri") {
           stableValue = o.value;
           displayValue = b.oLabel ? b.oLabel.value : localName(o.value);
+          objectType = "uri";
         } else {
           return;
         }
 
-        const metaId = safeId("meta:", predLN + "|" + stableValue);
+        const metaId = safeId("meta:", p + "|" + stableValue);
 
         if (!nodes[metaId]) {
           nodes[metaId] = {
@@ -417,7 +420,10 @@ LIMIT 3000
               id: metaId,
               label: displayValue,
               size: 2,
-              kind: "meta"
+              kind: "meta",
+              predicate: p,
+              stableValue: stableValue,
+              objectType: objectType
             }
           };
         }
@@ -453,58 +459,6 @@ LIMIT 3000
       cy.layout({ name: "cose" }).run();
 
       detailsContent.innerHTML = `<span class="muted">Click a <b>book title</b> node to see metadata.</span>`;
-    }
-
-    async function expandFromMetadataNode(node) {
-      const clickedValue = node.data("label");
-      if (!clickedValue) return;
-
-      setStatus(`Expanding from “${clickedValue}”…`);
-
-      try {
-        const q = escapeForSparqlString(clickedValue.toLowerCase());
-
-        const sparql = `
-PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
-PREFIX dcterms: <http://purl.org/dc/terms/>
-
-SELECT ?row ?p ?o ?oLabel WHERE {
-  {
-    SELECT DISTINCT ?row WHERE {
-      ?row ?p1 ?o1 .
-      {
-        FILTER(isLiteral(?o1))
-        FILTER(CONTAINS(LCASE(STR(?o1)), "${q}"))
-      }
-      UNION
-      {
-        FILTER(isIRI(?o1))
-        OPTIONAL { ?o1 (rdfs:label|skos:prefLabel|dcterms:title) ?o1Label . }
-        FILTER(BOUND(?o1Label))
-        FILTER(CONTAINS(LCASE(STR(?o1Label)), "${q}"))
-      }
-    } LIMIT 50
-  }
-
-  ?row ?p ?o .
-
-  OPTIONAL {
-    FILTER(isIRI(?o))
-    ?o (rdfs:label|skos:prefLabel|dcterms:title) ?oLabel .
-  }
-}
-LIMIT 3000
-        `;
-
-        const data = await sparqlSelect(sparql);
-        mergeBookCentricGraph(data, node.id());
-        setStatus(`Expanded from “${clickedValue}”`);
-      } catch (e) {
-        console.error(e);
-        setStatus("Expansion error");
-        alert("Could not expand related nodes. Check console for details.");
-      }
     }
 
     function mergeBookCentricGraph(data, clickedMetaId = null) {
@@ -557,18 +511,21 @@ LIMIT 3000
 
         let stableValue;
         let displayValue;
+        let objectType;
 
         if (o.type === "literal") {
           stableValue = o.value;
           displayValue = o.value;
+          objectType = "literal";
         } else if (o.type === "uri") {
           stableValue = o.value;
           displayValue = b.oLabel ? b.oLabel.value : localName(o.value);
+          objectType = "uri";
         } else {
           return;
         }
 
-        const metaId = safeId("meta:", predLN + "|" + stableValue);
+        const metaId = safeId("meta:", p + "|" + stableValue);
 
         if (cy.getElementById(metaId).empty() && !newNodes[metaId]) {
           newNodes[metaId] = {
@@ -576,7 +533,10 @@ LIMIT 3000
               id: metaId,
               label: displayValue,
               size: 2,
-              kind: "meta"
+              kind: "meta",
+              predicate: p,
+              stableValue: stableValue,
+              objectType: objectType
             }
           };
         }
@@ -623,6 +583,63 @@ LIMIT 3000
         const neighborhood = clickedNode.closedNeighborhood();
         neighborhood.addClass("highlighted");
         cy.elements().not(neighborhood).addClass("faded");
+      }
+    }
+
+    async function expandFromMetadataNode(node) {
+      const predicate = node.data("predicate");
+      const stableValue = node.data("stableValue");
+      const objectType = node.data("objectType");
+      const label = node.data("label");
+
+      if (!predicate || !stableValue || !objectType) return;
+
+      setStatus(`Expanding from “${label}”…`);
+
+      try {
+        let matchClause = "";
+
+        if (objectType === "uri") {
+          matchClause = `
+            ?row <${predicate}> <${stableValue}> .
+          `;
+        } else {
+          const escapedValue = escapeForSparqlString(stableValue);
+          matchClause = `
+            ?row <${predicate}> ?matchValue .
+            FILTER(STR(?matchValue) = "${escapedValue}")
+          `;
+        }
+
+        const sparql = `
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+
+SELECT ?row ?p ?o ?oLabel WHERE {
+  {
+    SELECT DISTINCT ?row WHERE {
+      ${matchClause}
+    } LIMIT 100
+  }
+
+  ?row ?p ?o .
+
+  OPTIONAL {
+    FILTER(isIRI(?o))
+    ?o (rdfs:label|skos:prefLabel|dcterms:title) ?oLabel .
+  }
+}
+LIMIT 5000
+        `;
+
+        const data = await sparqlSelect(sparql);
+        mergeBookCentricGraph(data, node.id());
+        setStatus(`Expanded from “${label}”`);
+      } catch (e) {
+        console.error(e);
+        setStatus("Expansion error");
+        alert("Could not expand related nodes. Check console for details.");
       }
     }
 
@@ -682,7 +699,7 @@ LIMIT 3000
           <div class="detail-label">Metadata value</div>
           <div class="detail-value">${escapeHtml(node.data("label"))}</div>
           <div class="muted" style="margin-top:10px;">
-            Expanding the graph to show related books and metadata…
+            Expanding the graph to show all books that share this exact same value…
           </div>
         `;
 
